@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[project]
+name = "winnow"
+version = "0.1.0"
+description = "Winnow — AI data analyst powered by LangGraph ReAct + GPT-4o"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph>=0.4",
+    "langchain-openai>=0.3",
+    "pandas>=2.0",
+    "openpyxl",
+    "seaborn>=0.13",
+    "matplotlib>=3.8",
+    "scikit-learn>=1.4",
+    "scipy>=1.12",
+    "tabulate",
+    "python-dotenv",
+    "rich"
+]
