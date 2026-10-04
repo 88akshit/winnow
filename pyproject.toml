@@ -12,6 +12,7 @@ version = "0.1.0"
 description = "Winnow — AI data analyst powered by LangGraph ReAct + GPT-4o"
 requires-python = ">=3.10"
 dependencies = [
+    "langchain>=1.0",
     "langgraph>=0.4",
     "langchain-openai>=0.3",
     "pandas>=2.0",

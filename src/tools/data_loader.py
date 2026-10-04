@@ -1,26 +1,29 @@
 from langchain_core.tools import tool
 import pandas as pd
 import json
+from src.utils.security import validate_safe_read_path
 
 DATASETS = {}
 
 @tool
 def load_csv(file_path: str, name: str) -> str:
-    """Load a CSV file into memory."""
+    """Load a CSV file from an allowed data directory into memory."""
     try:
-        df = pd.read_csv(file_path)
+        safe_path = validate_safe_read_path(file_path)
+        df = pd.read_csv(safe_path)
         DATASETS[name] = df
-        return f"Successfully loaded {name} with shape {df.shape}."
+        return f"Successfully loaded {name} from {safe_path.name} with shape {df.shape}."
     except Exception as e:
         return f"Error loading CSV: {str(e)}"
 
 @tool
 def load_excel(file_path: str, sheet_name: str, name: str) -> str:
-    """Load Excel file."""
+    """Load an Excel file from an allowed data directory into memory."""
     try:
-        df = pd.read_excel(file_path, sheet_name=sheet_name)
+        safe_path = validate_safe_read_path(file_path)
+        df = pd.read_excel(safe_path, sheet_name=sheet_name)
         DATASETS[name] = df
-        return f"Successfully loaded {name} from sheet {sheet_name} with shape {df.shape}."
+        return f"Successfully loaded {name} from {safe_path.name} (sheet {sheet_name}) with shape {df.shape}."
     except Exception as e:
         return f"Error loading Excel: {str(e)}"
 

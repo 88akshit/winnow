@@ -1,4 +1,10 @@
 from langchain_core.tools import tool
+import matplotlib
+
+# LangChain runs synchronous tools in worker threads; use a headless backend
+# so plotting never tries to create a macOS GUI window from those threads.
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os

@@ -1,5 +1,6 @@
 import os
-from langgraph.prebuilt import create_react_agent
+
+from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_openai import ChatOpenAI
 from .prompts import SYSTEM_PROMPT
@@ -42,10 +43,10 @@ def build_graph():
     ]
     
     memory = MemorySaver()
-    agent_executor = create_react_agent(
+    agent_executor = create_agent(
         llm,
         tools=tools,
-        prompt=SYSTEM_PROMPT,
+        system_prompt=SYSTEM_PROMPT,
         checkpointer=memory
     )
     return agent_executor
