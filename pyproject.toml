@@ -9,11 +9,12 @@ include = ["src*"]
 [project]
 name = "winnow"
 version = "0.1.0"
-description = "Winnow — AI data analyst powered by LangGraph ReAct + GPT-4o"
+description = "Winnow — data analysis workflows powered by LangGraph and Deep Agents"
 requires-python = ">=3.10"
 dependencies = [
     "langchain>=1.0",
     "langgraph>=0.4",
+    "deepagents>=0.3.0",
     "langchain-openai>=0.3",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",

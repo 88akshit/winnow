@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { chatWithWinnow, uploadDataset } from "./services/winnow.js";
+import { chatWithWinnow, resumeChat, uploadDataset } from "./services/winnow.js";
 
 const starterPrompts = [
   { icon: "↗", title: "Find the strongest relationships", text: "Which variables are most strongly related?" },
@@ -21,13 +21,16 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState("");
   const [error, setError] = useState("");
+  const [errorTitle, setErrorTitle] = useState("Something went wrong");
   const [dragging, setDragging] = useState(false);
   const [plots, setPlots] = useState([]);
+  const [clarification, setClarification] = useState("");
 
   const acceptFile = (incoming) => {
     const candidate = incoming?.[0] || incoming;
     if (!candidate) return;
     setError("");
+    setErrorTitle("Something went wrong");
     setFile(candidate);
   };
 
@@ -52,9 +55,11 @@ function App() {
         `I uploaded the dataset '${result.dataset.name}'. Begin the analysis workflow now. Inspect its shape, columns, missing values, and sample rows, then give me a concise initial exploratory analysis with useful findings and suitable visualizations.`,
         result.thread_id,
       );
-      setMessages([{ role: "assistant", text: analysis.assistant }]);
+      setMessages(analysis.clarification ? [] : [{ role: "assistant", text: analysis.assistant }]);
+      setClarification(analysis.clarification || "");
       setPlots(analysis.plots || []);
     } catch (err) {
+      setErrorTitle(err.status === 429 ? "Provider is busy" : err.status === 413 ? "Request exceeds provider limit" : "Something went wrong");
       setError(err.message || "Something went wrong while analyzing the file.");
     } finally {
       setBusy(false);
@@ -70,11 +75,18 @@ function App() {
     setBusy(true);
     setBusyLabel("Winnow is working through your question…");
     setError("");
+    setErrorTitle("Something went wrong");
     try {
-      const result = await chatWithWinnow(message, threadId);
-      setMessages((current) => [...current, { role: "assistant", text: result.assistant }]);
+      const result = clarification
+        ? await resumeChat(message, threadId)
+        : await chatWithWinnow(message, threadId);
+      setClarification(result.clarification || "");
+      if (!result.clarification) {
+        setMessages((current) => [...current, { role: "assistant", text: result.assistant }]);
+      }
       setPlots((current) => [...new Set([...current, ...(result.plots || [])])]);
     } catch (err) {
+      setErrorTitle(err.status === 429 ? "Provider is busy" : err.status === 413 ? "Request exceeds provider limit" : "Something went wrong");
       setError(err.message || "Something went wrong. Please try again.");
     } finally {
       setBusy(false);
@@ -98,7 +110,7 @@ function App() {
 
         <div className="workspace-label">WORKSPACE</div>
         <button className="nav-item active" type="button"><Icon>◫</Icon> Data studio <span className="nav-dot" /></button>
-        <button className="nav-item" type="button" onClick={() => { setDataset(null); setThreadId(null); setMessages([]); setPlots([]); setFile(null); setError(""); }}><Icon>＋</Icon> New analysis</button>
+        <button className="nav-item" type="button" onClick={() => { setDataset(null); setThreadId(null); setMessages([]); setPlots([]); setFile(null); setError(""); setClarification(""); }}><Icon>＋</Icon> New analysis</button>
 
         <div className="sidebar-divider" />
         <div className="sidebar-heading">CURRENT DATASET</div>
@@ -144,7 +156,7 @@ function App() {
         ) : (
           <section className="analysis-layout">
             <div className="analysis-main">
-              <div className="analysis-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> ANALYSIS WORKSPACE</div><h1>{dataset.name.replace(/_[a-f0-9]{8}$/, "")}</h1><p>{dataset.rows.toLocaleString()} rows <span>·</span> {dataset.columns} columns <span>·</span> Ready to explore</p></div><button className="outline-button" onClick={() => { setDataset(null); setThreadId(null); setMessages([]); setFile(null); }}><span>＋</span> New file</button></div>
+              <div className="analysis-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> ANALYSIS WORKSPACE</div><h1>{dataset.name.replace(/_[a-f0-9]{8}$/, "")}</h1><p>{dataset.rows.toLocaleString()} rows <span>·</span> {dataset.columns} columns <span>·</span> Ready to explore</p></div><button className="outline-button" onClick={() => { setDataset(null); setThreadId(null); setMessages([]); setFile(null); setClarification(""); }}><span>＋</span> New file</button></div>
 
               <div className="metric-row"><div className="metric-card"><span>OBSERVATIONS</span><strong>{dataset.rows.toLocaleString()}</strong><small>rows in your dataset</small></div><div className="metric-card"><span>VARIABLES</span><strong>{dataset.columns}</strong><small>columns to explore</small></div><div className="metric-card"><span>FILE STATUS</span><strong className="ready-text"><i /> Ready</strong><small>analysis in progress</small></div></div>
 
@@ -152,13 +164,14 @@ function App() {
 
               <div className="conversation">
                 <div className="section-label conversation-label">YOUR ANALYSIS <span className="conversation-line" /></div>
+                {clarification && <div className="clarification-banner"><strong>Winnow needs one detail</strong><span>{clarification}</span></div>}
                 {messages.map((message, index) => <article className={`message ${message.role}`} key={`${message.role}-${index}`}><div className={message.role === "assistant" ? "message-avatar" : "user-avatar"}>{message.role === "assistant" ? <span className="brand-mark small"><span /><span /><span /></span> : "A"}</div><div className="message-content"><div className="message-meta"><strong>{message.role === "assistant" ? "Winnow" : "You"}</strong><span>{message.role === "assistant" ? "DATA ANALYST" : "JUST NOW"}</span></div><div className="message-text">{message.text}</div></div></article>)}
                 {busy && <div className="message assistant"><div className="message-avatar"><span className="brand-mark small"><span /><span /><span /></span></div><div className="message-content"><div className="message-meta"><strong>Winnow</strong><span>WORKING</span></div><div className="typing-row"><span className="typing-dots"><i /><i /><i /></span>{busyLabel}</div></div></div>}
                 {plots.length > 0 && <div className="plot-grid">{plots.map((plot) => <figure className="plot-card" key={plot}><img src={plot} alt="Chart from your analysis" /><figcaption>Generated from your dataset</figcaption></figure>)}</div>}
-                {error && <div className="error-banner"><strong>Something went wrong</strong><span>{error}</span></div>}
+                {error && <div className="error-banner"><strong>{errorTitle}</strong><span>{error}</span></div>}
               </div>
 
-              <form className="composer" onSubmit={(e) => { e.preventDefault(); sendMessage(); }}><textarea value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Ask anything about your data…" rows="1" disabled={busy} /><div className="composer-footer"><span>Winnow can make mistakes. Check important findings.</span><button className="send-button" type="submit" disabled={!draft.trim() || busy} aria-label="Send message"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button></div></form>
+              <form className="composer" onSubmit={(e) => { e.preventDefault(); sendMessage(); }}><textarea value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={clarification ? "Answer Winnow’s question…" : "Ask anything about your data…"} rows="1" disabled={busy} /><div className="composer-footer"><span>Winnow can make mistakes. Check important findings.</span><button className="send-button" type="submit" disabled={!draft.trim() || busy} aria-label={clarification ? "Answer clarification" : "Send message"}><svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></button></div></form>
             </div>
 
             <aside className="data-panel"><div className="data-panel-head"><div><div className="section-label">DATA OVERVIEW</div><p>Quick look at your file</p></div><span className="more-button">···</span></div><div className="data-file-card"><span className="file-badge">{dataset.file_type === "xlsx" ? "XLS" : "CSV"}</span><div><strong>{dataset.name.replace(/_[a-f0-9]{8}$/, "")}</strong><span>{dataset.rows.toLocaleString()} × {dataset.columns}</span></div></div><div className="preview-title">COLUMN PREVIEW <span>{dataset.columns} total</span></div><div className="column-list">{dataset.column_names.slice(0, 12).map((column, index) => <div className="column-item" key={column}><span className="column-type">{typeof dataset.preview?.[0]?.[column] === "number" ? "#" : "T"}</span><span>{column}</span><span className="column-index">{String(index + 1).padStart(2, "0")}</span></div>)}{dataset.columns > 12 && <div className="more-columns">+ {dataset.columns - 12} more columns</div>}</div><div className="preview-title table-title">SAMPLE ROWS <span>First {Math.min(dataset.preview.length, 8)}</span></div><div className="table-wrap"><table><thead><tr>{dataset.column_names.slice(0, 3).map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{dataset.preview.slice(0, 5).map((row, index) => <tr key={index}>{dataset.column_names.slice(0, 3).map((column) => <td key={column}>{String(row[column] ?? "—")}</td>)}</tr>)}</tbody></table></div><div className="data-panel-foot"><span className="ready-pip" /> File loaded to this workspace</div></aside>

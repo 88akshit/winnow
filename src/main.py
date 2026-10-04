@@ -66,7 +66,10 @@ def main():
                         console.print(f"  [cyan]{name}[/cyan]: {df.shape[0]} rows × {df.shape[1]} cols")
                 continue
             
-            inputs = {"messages": [("user", user_input)]}
+            inputs = {
+                "messages": [("user", user_input)],
+                "thread_id": config["configurable"]["thread_id"],
+            }
             with console.status("[bold green]Thinking...[/bold green]", spinner="dots"):
                 response_received = False
                 for event in agent.stream(inputs, config=config, stream_mode="values"):
@@ -90,4 +93,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

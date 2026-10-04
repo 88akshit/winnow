@@ -1,6 +1,6 @@
 # 📊 Winnow
 
-A **supervisor with specialist ReAct agents** for interactive data analysis, powered by **LangGraph** and an OpenAI-compatible model.
+A **LangGraph data analyst** with a dependency-aware workflow and an open-ended Deep Agent path, powered by specialized agents and an OpenAI-compatible model.
 
 > Drop in any CSV/Excel file, and Winnow will analyze, visualize, and explain your data — all through natural language conversation.
 
@@ -8,45 +8,52 @@ A **supervisor with specialist ReAct agents** for interactive data analysis, pow
 
 ```mermaid
 flowchart TD
-    U[User / React UI or CLI] --> S["Supervisor node<br/>reads conversation and selects next step"]
+    U[User question] --> I[Understand intent and entities]
+    I -->|required detail missing| C[Clarify with interrupt]
+    C -->|known shape| P[Plan specialist tasks]
+    C -->|open-ended| DA[Deep agent]
+    I -->|known shape| P
+    I -->|open-ended| DA
+    P -->|Send ready tasks in parallel| S[Shared specialist subgraphs]
+    S --> K[Collect and merge results]
+    P -->|no specialist task| K
+    K --> Y[Synthesize answer]
+    Y --> V[Validate support and gaps]
+    V -->|supported or replan used| F[Return answer]
+    V -->|needs correction, once| R[Replan]
+    R --> P
 
-    S -->|next_agent = data| D
-    S -->|next_agent = statistics| A
-    S -->|next_agent = visualization| V
-    S -->|next_agent = finish| E([END])
-
-    subgraph DATA["Data specialist subgraph"]
-        D[Data graph node] --> DM[Specialist model]
-        DM -->|tool call| DT["load_csv · load_excel<br/>list_datasets · preview_data<br/>get_column_info · describe_data"]
-        DT -->|tool result| DM
-        DM --> DR[Return findings]
+    subgraph AGENTS["Specialist subgraphs"]
+    D[Data agent<br/>load and inspect]
+    A[Statistics agent<br/>tests, correlations, features]
+    Z[Visualization agent<br/>charts and artifacts]
+    X[Custom analysis agent<br/>sandboxed code]
     end
-
-    subgraph STATS["Statistics specialist subgraph"]
-        A[Statistics graph node] --> AM[Specialist model]
-        AM -->|tool call| AT["correlation · group stats · tests<br/>outliers · feature analysis<br/>Python sandbox"]
-        AT -->|tool result| AM
-        AM --> AR[Return findings]
-    end
-
-    subgraph VIZ["Visualization specialist subgraph"]
-        V[Visualization graph node] --> VM[Specialist model]
-        VM -->|tool call| VT["histogram · scatter · heatmap<br/>boxplot · pairplot · distribution"]
-        VT -->|tool result| VM
-        VM --> VR[Return chart path]
-    end
-
-    DR -->|append result to graph state| S
-    AR -->|append result to graph state| S
-    VR -->|append result to graph state| S
+    S --> D
+    S --> A
+    S --> Z
+    S --> X
+    DA -->|self-planning, todos, virtual files| D
+    DA --> A
+    DA --> Z
+    DA --> X
+    D --> K
+    A --> K
+    Z --> K
+    X --> K
+    DA --> K
 ```
 
-The supervisor and specialist nodes form the outer `StateGraph`. Conditional
-edges select one specialist or finish the turn. Each specialist node invokes
-a focused agent subgraph, whose model can call only that specialist's tools.
-Results return to the shared graph state for the supervisor to use in its next
-decision. The outer graph uses `MemorySaver` to retain conversation state by
-thread.
+The outer `StateGraph` classifies requests after understanding them. Focused,
+well-shaped work uses the DAG planner, which sends ready tasks to shared data,
+statistics, visualization, and sandboxed analysis subgraphs; dependency steps
+run in later batches. Open-ended exploratory requests use a Deep Agent with its
+own self-planning loop, todo list, and virtual files. It delegates to those same
+compiled specialist workers, then joins the shared synthesis and validation
+path. If validation finds a concrete gap, the DAG workflow can replan once. The
+clarification node uses LangGraph `interrupt()`; the API and UI resume the same
+thread after the user answers. The graph currently uses `MemorySaver`, so thread
+checkpoints last only for the lifetime of the API process.
 
 ## Quick Start
 
@@ -96,6 +103,22 @@ npm run dev
 Open the local URL printed by Vite. Upload a CSV or XLSX file to start the
 initial analysis automatically. For a single-server deployment, build the UI
 with `npm run build`; FastAPI serves `frontend/dist` when it exists.
+
+### Workflow logs
+
+API and CLI runs print workflow events to the terminal. Events include the
+thread ID, selected route, ready DAG steps, specialist and tool start/completion,
+durations, collection, synthesis, validation, and replanning. Upload restoration
+and chat failures are logged too. Logs include task and result lengths rather
+than prompt or dataset contents. Set `WINNOW_LOG_LEVEL=WARNING` to reduce
+workflow detail; the default is `INFO`. Terminal output uses colored `*** STAGE ***`
+markers when supported. Parallel tool calls include a short `call_id` so separate
+calls to the same tool are easy to tell apart. Set `NO_COLOR=1` to disable colors.
+Provider calls retry transient rate limits up to four times. If the provider
+still returns HTTP 429, Winnow reports that the provider is busy and includes
+the provider's `Retry-After` delay when available. Provider token-throughput
+errors are reported separately with guidance to shorten the request or change
+to a model with a higher input-token allowance.
 
 ## Usage Examples
 

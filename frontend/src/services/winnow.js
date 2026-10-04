@@ -7,7 +7,10 @@ async function requestJson(path, options) {
     result.detail = `The server returned an unreadable response (${response.status}).`;
   }
   if (!response.ok) {
-    throw new Error(result.detail || `Request failed (${response.status}).`);
+    const error = new Error(result.detail || `Request failed (${response.status}).`);
+    error.status = response.status;
+    error.retryAfter = response.headers.get("Retry-After");
+    throw error;
   }
   return result;
 }
@@ -23,5 +26,13 @@ export function chatWithWinnow(message, threadId) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, thread_id: threadId }),
+  });
+}
+
+export function resumeChat(answer, threadId) {
+  return requestJson("/api/chat/resume", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ answer, thread_id: threadId }),
   });
 }
