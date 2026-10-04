@@ -1,39 +1,52 @@
 # 📊 Winnow
 
-A **ReAct-based AI agent** for interactive data analysis, powered by **LangGraph** and **OpenAI GPT-4o**.
+A **supervisor with specialist ReAct agents** for interactive data analysis, powered by **LangGraph** and an OpenAI-compatible model.
 
 > Drop in any CSV/Excel file, and Winnow will analyze, visualize, and explain your data — all through natural language conversation.
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    U[User / React UI or CLI] --> S["Supervisor node<br/>reads conversation and selects next step"]
+
+    S -->|next_agent = data| D
+    S -->|next_agent = statistics| A
+    S -->|next_agent = visualization| V
+    S -->|next_agent = finish| E([END])
+
+    subgraph DATA["Data specialist subgraph"]
+        D[Data graph node] --> DM[Specialist model]
+        DM -->|tool call| DT["load_csv · load_excel<br/>list_datasets · preview_data<br/>get_column_info · describe_data"]
+        DT -->|tool result| DM
+        DM --> DR[Return findings]
+    end
+
+    subgraph STATS["Statistics specialist subgraph"]
+        A[Statistics graph node] --> AM[Specialist model]
+        AM -->|tool call| AT["correlation · group stats · tests<br/>outliers · feature analysis<br/>Python sandbox"]
+        AT -->|tool result| AM
+        AM --> AR[Return findings]
+    end
+
+    subgraph VIZ["Visualization specialist subgraph"]
+        V[Visualization graph node] --> VM[Specialist model]
+        VM -->|tool call| VT["histogram · scatter · heatmap<br/>boxplot · pairplot · distribution"]
+        VT -->|tool result| VM
+        VM --> VR[Return chart path]
+    end
+
+    DR -->|append result to graph state| S
+    AR -->|append result to graph state| S
+    VR -->|append result to graph state| S
 ```
-┌──────────────────────────────────────────────────┐
-│                   User (Terminal)                 │
-└──────────────────────┬───────────────────────────┘
-                       │ natural language
-                       ▼
-┌──────────────────────────────────────────────────┐
-│              LangGraph ReAct Agent               │
-│     ┌──────────────────────────────────────┐     │
-│     │  Thought → Action → Observation → …  │     │
-│     └──────────────────────────────────────┘     │
-│     GPT-4o  •  MemorySaver checkpointing         │
-└──────────────────────┬───────────────────────────┘
-                       │ tool calls
-          ┌────────────┼────────────┐
-          ▼            ▼            ▼
-   ┌─────────┐  ┌───────────┐ ┌──────────┐
-   │  Data   │  │ Analysis  │ │  Viz &   │
-   │ Loader  │  │  & Stats  │ │ Features │
-   └─────────┘  └───────────┘ └──────────┘
-          │            │            │
-          └────────────┼────────────┘
-                       ▼
-              ┌─────────────────┐
-              │ Python Executor │
-              │  (sandboxed)    │
-              └─────────────────┘
-```
+
+The supervisor and specialist nodes form the outer `StateGraph`. Conditional
+edges select one specialist or finish the turn. Each specialist node invokes
+a focused agent subgraph, whose model can call only that specialist's tools.
+Results return to the shared graph state for the supervisor to use in its next
+decision. The outer graph uses `MemorySaver` to retain conversation state by
+thread.
 
 ## Quick Start
 
@@ -63,6 +76,26 @@ cp .env.example .env
 uv run python src/main.py
 # or: python src/main.py
 ```
+
+### 4. Run the React web app
+
+Start the API from the project root in one terminal:
+
+```bash
+python -m uvicorn src.api:app --reload
+```
+
+Then start the React development server in another terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open the local URL printed by Vite. Upload a CSV or XLSX file to start the
+initial analysis automatically. For a single-server deployment, build the UI
+with `npm run build`; FastAPI serves `frontend/dist` when it exists.
 
 ## Usage Examples
 
@@ -145,8 +178,10 @@ winnow/
 ├── .env.example                # API key template
 ├── .gitignore
 ├── README.md
+├── frontend/                   # React + Vite web interface
 ├── src/
 │   ├── main.py                 # Interactive chat loop (Rich UI)
+│   ├── api.py                  # FastAPI upload and chat endpoints
 │   ├── agent/
 │   │   ├── graph.py            # LangGraph ReAct agent
 │   │   ├── state.py            # Agent state definition
@@ -172,6 +207,8 @@ winnow/
 - **scikit-learn** — Feature importance
 - **scipy** — Statistical tests
 - **Rich** — Terminal UI
+- **React + Vite** — Browser interface for upload and analysis
+- **FastAPI** — Upload and chat API
 
 ## License
 

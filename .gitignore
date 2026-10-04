@@ -3,6 +3,10 @@ venv/
 __pycache__/
 *.egg-info/
 .env
+.DS_Store
+data/*
 outputs/*.png
 outputs/*.csv
 *.log
+frontend/node_modules/
+frontend/dist/
