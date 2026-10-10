@@ -22,9 +22,9 @@ flowchart TD
     P -->|no specialist task| K
     K --> Y[Synthesize answer]
     Y --> V[Validate support and gaps]
-    V -->|supported or replan used| F[Return answer]
-    V -->|needs correction, once| R[Replan]
-    R --> P
+    V -->|supported or correction used| F[Return answer]
+    V -->|needs correction, once| R[Correct synthesis]
+    R --> Y
 
     subgraph AGENTS["Specialist subgraphs"]
     D[Data agent<br/>load and inspect]
@@ -60,7 +60,13 @@ statistics, visualization, and sandboxed analysis subgraphs; dependency steps
 run in later batches. Open-ended exploratory requests use a Deep Agent with its
 own self-planning loop, todo list, and virtual files. It delegates to those same
 compiled specialist workers, then joins the shared synthesis and validation
-path. If validation finds a concrete gap, the DAG workflow can replan once. The
+path. If validation finds a concrete gap, the DAG workflow can revise the
+synthesis once using the completed specialist findings, without rerunning tools.
+Chart artifacts are displayed separately by the UI, so the answer does not need
+to invent or repeat a local file path. Specialist findings and validation input
+are bounded to reduce oversized provider requests; if validation alone gets a
+provider 413 response, Winnow keeps the synthesized answer instead of failing
+the workflow. The
 clarification node uses LangGraph `interrupt()`; the API and UI resume the same
 thread after the user answers. The graph currently uses `MemorySaver`, so thread
 checkpoints last only for the lifetime of the API process.

@@ -55,6 +55,9 @@ from src.utils.logging_config import get_logger
 
 MAX_SPECIALIST_TASKS = 4
 MAX_REPLANS = 1
+MAX_FINDING_CHARS = 6_000
+MAX_FINDINGS_CHARS = 24_000
+MAX_VALIDATION_ANSWER_CHARS = 12_000
 logger = get_logger("winnow.workflow")
 
 
@@ -74,6 +77,7 @@ class WinnowState(MessagesState):
     tasks: list[dict]
     specialist_results: Annotated[dict[str, dict[str, str]], merge_results]
     synthesis: str
+    previous_synthesis: str
     validation_feedback: str
     valid: bool
     replan_count: int
@@ -140,7 +144,7 @@ def _final_agent_text(result) -> str:
 
 
 def _is_provider_token_limit(error: BaseException) -> bool:
-    """Identify provider 413s caused by an input-token throughput limit."""
+    """Identify provider 413s caused by an oversized request or token limit."""
     seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
@@ -152,8 +156,10 @@ def _is_provider_token_limit(error: BaseException) -> bool:
         except (TypeError, ValueError):
             payload_too_large = False
         message = str(current).lower()
-        if payload_too_large and "token" in message and (
-            "rate_limit_exceeded" in message or "tokens per minute" in message
+        if payload_too_large and any(
+            marker in message for marker in (
+                "token", "too large", "content length", "request entity",
+            )
         ):
             return True
         current = current.__cause__ or current.__context__
@@ -286,8 +292,9 @@ def build_graph():
             "clear steps, track them with your todo list, and use your virtual files to keep concise notes and "
             "intermediate findings. Delegate data inspection, statistical work, chart creation, and custom "
             "sandboxed analysis to the matching specialist subagents when the task needs them. Uploaded datasets "
-            "are accessible through those specialists. Do not fabricate findings; return a concise report that "
-            "synthesizes worker results and calls out limitations and generated artifact paths."
+            "are accessible through those specialists. Do not fabricate findings or local file paths; return a "
+            "concise report that synthesizes worker results, calls out limitations, and describes generated charts "
+            "without inventing their paths. The UI displays generated chart artifacts separately."
         ),
         subagents=[
             CompiledSubAgent(
@@ -366,6 +373,7 @@ def build_graph():
             "specialist_results": Overwrite({}),
             "tasks": [],
             "synthesis": "",
+            "previous_synthesis": "",
             "validation_feedback": "",
             "valid": False,
             "replan_count": 0,
@@ -629,22 +637,41 @@ def build_graph():
             state.get("thread_id", "unknown"), len(state.get("specialist_results", {})),
         )
         findings = "\n\n".join(
-            f"{item['specialist']} ({name}) — task: {item['task']}\nFinding: {item['result']}"
+            f"{item['specialist']} ({name}) finding:\n{str(item['result'])[:MAX_FINDING_CHARS]}"
             for name, item in state.get("specialist_results", {}).items()
         ) or "No specialist tools were needed for this response."
+        findings = findings[:MAX_FINDINGS_CHARS]
         try:
             response = synthesis_model.invoke([
                 SystemMessage(content=(
                     "You are Winnow's synthesis node. Answer the user's request using the supplied specialist findings. "
                     "Do not invent data, calculations, citations, or artifacts. Say when evidence is missing. "
-                    "Preserve relevant caveats and mention generated chart paths."
+                    "Preserve relevant caveats. Never invent or infer a local file path for a chart. If a specialist "
+                    "says a chart was created but gives no path, say that the chart was generated; the UI displays "
+                    "generated chart artifacts separately. Apply any validation correction below while preserving "
+                    "all supported findings."
                 )),
                 HumanMessage(content=(
                     f"Request: {state.get('user_request', '')}\n"
-                    f"Clarification: {state.get('clarification', '')}\nFindings:\n{findings}"
+                    f"Clarification: {state.get('clarification', '')}\n"
+                    f"Validation correction: {str(state.get('validation_feedback', ''))[:2000]}\n"
+                    f"Findings:\n{findings}"
                 )),
             ])
-        except Exception:
+        except Exception as exc:
+            if _is_provider_token_limit(exc) and state.get("previous_synthesis"):
+                logger.warning(
+                    "event=synthesis_retry_token_limit thread_id=%s fallback=previous_synthesis",
+                    state.get("thread_id", "unknown"),
+                )
+                return {
+                    "synthesis": state["previous_synthesis"],
+                    "validation_feedback": (
+                        "The correction request exceeded the model provider's request limit; "
+                        "the prior draft is shown and may need manual review."
+                    ),
+                    "valid": False,
+                }
             logger.exception("event=synthesis_failed thread_id=%s", state.get("thread_id", "unknown"))
             raise
         synthesis = _message_content(response)
@@ -659,23 +686,35 @@ def build_graph():
         started = time.perf_counter()
         logger.info("event=validation_started thread_id=%s", state.get("thread_id", "unknown"))
         findings = "\n\n".join(
-            f"{item['specialist']}: {item['result']}"
+            f"{item['specialist']}: {str(item['result'])[:MAX_FINDING_CHARS]}"
             for name, item in state.get("specialist_results", {}).items()
-        )
+        )[:MAX_FINDINGS_CHARS]
         try:
             result = validation_model.invoke([
                 SystemMessage(content=(
                     "Check whether the proposed response answers the request and whether every factual or numeric "
                     "data claim is supported by the specialist findings. If unsupported or incomplete, return invalid "
-                    "with a concise actionable correction. Do not reject merely for reasonable wording choices."
+                    "with a concise actionable correction. Do not reject merely for reasonable wording choices. "
+                    "A chart may be described as generated when findings say it was created. Do not require or "
+                    "validate a local file path; an unsupported path should simply be omitted and is not by itself "
+                    "a reason to reject an otherwise supported answer."
                 )),
                 HumanMessage(content=(
                     f"Request: {state.get('user_request', '')}\n"
                     f"Findings:\n{findings or 'No specialist findings.'}\n"
-                    f"Proposed answer:\n{state.get('synthesis', '')}"
+                    f"Proposed answer:\n{str(state.get('synthesis', ''))[:MAX_VALIDATION_ANSWER_CHARS]}"
                 )),
             ])
-        except Exception:
+        except Exception as exc:
+            if _is_provider_token_limit(exc):
+                logger.warning(
+                    "event=validation_skipped_token_limit thread_id=%s action=accept_synthesis",
+                    state.get("thread_id", "unknown"),
+                )
+                return {
+                    "valid": True,
+                    "validation_feedback": "",
+                }
             logger.exception("event=validation_failed thread_id=%s", state.get("thread_id", "unknown"))
             raise
         logger.info(
@@ -704,7 +743,7 @@ def build_graph():
         )
         return {
             "replan_count": state.get("replan_count", 0) + 1,
-            "specialist_results": Overwrite({}),
+            "previous_synthesis": state.get("synthesis", ""),
             "synthesis": "",
         }
 
@@ -749,7 +788,9 @@ def build_graph():
     graph.add_edge("deep_agent", "collect")
     graph.add_edge("synthesize", "validate")
     graph.add_conditional_edges("validate", route_after_validation, {"replan": "replan", "finish": "finish"})
-    graph.add_edge("replan", "plan")
+    # Validation corrections usually change wording or remove an unsupported
+    # claim. Reuse the completed findings instead of rerunning specialist tools.
+    graph.add_edge("replan", "synthesize")
     graph.add_edge("finish", END)
 
     return graph.compile(checkpointer=MemorySaver())
