@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -19,6 +19,7 @@ from starlette.concurrency import run_in_threadpool
 
 from src.agent.graph import build_graph
 from src.tools.data_loader import DATASETS, load_csv, load_excel
+from src.utils.phoenix_tracing import flush_phoenix, phoenix_trace_context
 from src.utils.logging_config import get_logger
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -41,7 +42,10 @@ async def lifespan(app: FastAPI):
     logger.info("event=api_startup_restore_started data_dir=%s", DATA_DIR)
     restored = await run_in_threadpool(load_persisted_datasets)
     logger.info("event=api_startup_restore_completed restored_count=%d", restored)
-    yield
+    try:
+        yield
+    finally:
+        await run_in_threadpool(flush_phoenix)
 
 
 app = FastAPI(title="Winnow API", lifespan=lifespan)
@@ -87,6 +91,8 @@ def load_persisted_datasets():
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     thread_id: str = Field(min_length=1, max_length=128)
+    mode: Literal["dataset", "simple"] = "dataset"
+    dataset_name: str | None = Field(default=None, max_length=128)
 
 
 class ClarificationRequest(BaseModel):
@@ -135,7 +141,10 @@ def pending_clarification(result: dict) -> str | None:
     return None
 
 
-async def run_chat(message_or_resume, thread_id: str, resume: bool = False):
+async def run_chat(
+    message_or_resume, thread_id: str, resume: bool = False,
+    mode: str = "dataset", dataset_name: str | None = None,
+):
     started = time.perf_counter()
     logger.info(
         "event=chat_started thread_id=%s action=%s message_chars=%d",
@@ -145,13 +154,18 @@ async def run_chat(message_or_resume, thread_id: str, resume: bool = False):
     if resume:
         graph_input = Command(resume=message_or_resume)
     else:
-        graph_input = {"messages": [("user", message_or_resume)], "thread_id": thread_id}
+        graph_input = {
+            "messages": [("user", message_or_resume)], "thread_id": thread_id,
+            "chat_mode": mode, "chat_dataset_name": dataset_name,
+        }
+    run_config = {"configurable": {"thread_id": thread_id}}
+
+    def invoke_graph():
+        with phoenix_trace_context(thread_id, "api"):
+            return get_agent().invoke(graph_input, run_config)
+
     try:
-        result = await run_in_threadpool(
-            get_agent().invoke,
-            graph_input,
-            {"configurable": {"thread_id": thread_id}},
-        )
+        result = await run_in_threadpool(invoke_graph)
     except Exception as exc:
         retry_after = rate_limit_retry_after(exc)
         if retry_after is not None:
@@ -283,6 +297,18 @@ async def health():
     )}
 
 
+@app.get("/api/datasets")
+async def get_loaded_datasets():
+    datasets = []
+    for name in DATASETS:
+        extension = next(
+            (suffix for suffix in (".csv", ".xlsx") if (DATA_DIR / f"{name}{suffix}").is_file()),
+            ".csv",
+        )
+        datasets.append(dataset_details(name, extension))
+    return {"datasets": datasets}
+
+
 @app.post("/api/upload")
 async def upload_dataset(file: UploadFile = File(...)):
     original_name = Path(file.filename or "dataset").name
@@ -340,7 +366,12 @@ async def upload_dataset(file: UploadFile = File(...)):
 async def chat(request: ChatRequest):
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
-    return await run_chat(request.message, request.thread_id)
+    if request.dataset_name and request.dataset_name not in DATASETS:
+        raise HTTPException(status_code=404, detail="Selected dataset is no longer loaded. Reload it and try again.")
+    return await run_chat(
+        request.message, request.thread_id, mode=request.mode,
+        dataset_name=request.dataset_name,
+    )
 
 
 @app.post("/api/chat/resume")

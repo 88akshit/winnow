@@ -13,6 +13,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from src.agent.graph import build_graph
 from src.tools.data_loader import DATASETS
+from src.utils.phoenix_tracing import flush_phoenix, initialize_phoenix, phoenix_trace_context
 
 load_dotenv()
 console = Console()
@@ -42,6 +43,7 @@ def main():
         border_style="green"
     ))
     
+    initialize_phoenix()
     agent = build_graph()
     config = {"configurable": {"thread_id": "session_1"}}
     
@@ -72,15 +74,16 @@ def main():
             }
             with console.status("[bold green]Thinking...[/bold green]", spinner="dots"):
                 response_received = False
-                for event in agent.stream(inputs, config=config, stream_mode="values"):
-                    message = event["messages"][-1]
-                    if hasattr(message, "tool_calls") and message.tool_calls:
-                        for tc in message.tool_calls:
-                            console.print(f"  [dim]🔧 Calling {tc['name']}...[/dim]")
-                    if message.type == "ai" and message.content:
-                        console.print(f"\n[bold magenta]Winnow:[/bold magenta]")
-                        console.print(Markdown(message.content))
-                        response_received = True
+                with phoenix_trace_context(config["configurable"]["thread_id"], "cli"):
+                    for event in agent.stream(inputs, config=config, stream_mode="values"):
+                        message = event["messages"][-1]
+                        if hasattr(message, "tool_calls") and message.tool_calls:
+                            for tc in message.tool_calls:
+                                console.print(f"  [dim]🔧 Calling {tc['name']}...[/dim]")
+                        if message.type == "ai" and message.content:
+                            console.print(f"\n[bold magenta]Winnow:[/bold magenta]")
+                            console.print(Markdown(message.content))
+                            response_received = True
 
             if not response_received:
                 console.print("[dim yellow](No text response generated)[/dim yellow]")
@@ -90,6 +93,8 @@ def main():
             break
         except Exception as e:
             console.print(f"[red]Error: {type(e).__name__}: {str(e)}[/red]")
+
+    flush_phoenix()
 
 if __name__ == "__main__":
     main()

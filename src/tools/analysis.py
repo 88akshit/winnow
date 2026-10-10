@@ -1,4 +1,5 @@
 from langchain_core.tools import tool
+import pandas as pd
 from tabulate import tabulate
 from .data_loader import DATASETS
 
@@ -39,15 +40,33 @@ def group_statistics(dataset_name: str, group_by: str, agg_column: str, agg_func
 
 @tool
 def statistical_test(dataset_name: str, column1: str, column2: str, test_type: str) -> str:
-    """Run t-test, chi-square, etc."""
+    """Run a t-test or Pearson correlation on two numeric dataset columns."""
     import scipy.stats as stats
     if dataset_name not in DATASETS: return "Dataset not found."
-    df = DATASETS[dataset_name].dropna(subset=[column1, column2])
+    df = DATASETS[dataset_name]
+    missing = [column for column in (column1, column2) if column not in df.columns]
+    if missing: return f"Column not found: {', '.join(missing)}."
+
+    # CSV/Excel inference can leave numeric-looking or mixed columns as object
+    # dtype. scipy.stats requires actual numeric arrays, so coerce values here.
+    import numpy as np
+    first = pd.to_numeric(df[column1], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
+    second = pd.to_numeric(df[column2], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
     if test_type.lower() in ['t-test', 'ttest']:
-        stat, p = stats.ttest_ind(df[column1], df[column2])
+        first = first[np.isfinite(first)]
+        second = second[np.isfinite(second)]
+        if len(first) < 2 or len(second) < 2:
+            return "A t-test needs at least two valid numeric values in each column."
+        stat, p = stats.ttest_ind(first, second)
         return f"T-test results: statistic={stat}, p-value={p}"
     elif test_type.lower() == 'pearson':
-        stat, p = stats.pearsonr(df[column1], df[column2])
+        valid = np.isfinite(first) & np.isfinite(second)
+        first, second = first[valid], second[valid]
+        if len(first) < 2:
+            return "Pearson correlation needs at least two rows with valid numeric values in both columns."
+        if np.ptp(first) == 0 or np.ptp(second) == 0:
+            return "Pearson correlation is undefined because one of the columns has no variation."
+        stat, p = stats.pearsonr(first, second)
         return f"Pearson correlation: statistic={stat}, p-value={p}"
     return "Unsupported test_type."
 

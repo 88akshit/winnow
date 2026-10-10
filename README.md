@@ -2,13 +2,16 @@
 
 A **LangGraph data analyst** with a dependency-aware workflow and an open-ended Deep Agent path, powered by specialized agents and an OpenAI-compatible model.
 
-> Drop in any CSV/Excel file, and Winnow will analyze, visualize, and explain your data — all through natural language conversation.
+> Ask Winnow a question in simple chat, or upload a CSV/Excel file and ask a focused question about your data.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    U[User question] --> I[Understand intent and entities]
+    U[User question] --> M{Start mode}
+    M -->|Simple chat| SC[Direct general chat model call]
+    SC --> SR[Return response]
+    M -->|Dataset analysis| I
     I -->|required detail missing| C[Clarify with interrupt]
     C -->|known shape| P[Plan specialist tasks]
     C -->|open-ended| DA[Deep agent]
@@ -44,7 +47,14 @@ flowchart TD
     DA --> K
 ```
 
-The outer `StateGraph` classifies requests after understanding them. Focused,
+The web app offers two start modes. **Simple chat** starts a conversation with
+or without a dataset. Users can select an already uploaded dataset or upload a
+new one; Winnow passes its schema, summary statistics, and a small row sample
+to the chat model. Chat turns go directly to the model and bypass the data
+analysis workflow. For exact calculations across all rows, use **Dataset
+analysis**, which lets users select an existing dataset or upload a CSV/XLSX
+file before starting the workflow with their question. The outer `StateGraph`
+classifies dataset requests after understanding them. Focused,
 well-shaped work uses the DAG planner, which sends ready tasks to shared data,
 statistics, visualization, and sandboxed analysis subgraphs; dependency steps
 run in later batches. Open-ended exploratory requests use a Deep Agent with its
@@ -77,6 +87,32 @@ cp .env.example .env
 # Edit .env and add your GROQ_API_KEY, NVIDIA_API_KEY, or OPENAI_API_KEY
 ```
 
+Install the tracing dependencies with the rest of the project using `uv sync`
+(or `pip install -e .`). To send traces to Phoenix, set
+`WINNOW_PHOENIX_ENABLED=true` in `.env`. The default collector endpoint is
+local Phoenix at `http://localhost:6006/v1/traces`. For Phoenix Cloud or a
+self-hosted server, set `PHOENIX_COLLECTOR_ENDPOINT` to its OTLP trace endpoint
+and set `PHOENIX_API_KEY` if authentication is enabled. `PHOENIX_PROJECT_NAME`
+defaults to `winnow`. Tracing stays disabled by default.
+
+To run the Phoenix UI locally, install its server package and start it from the
+project root:
+
+```bash
+uv pip install arize-phoenix
+PHOENIX_WORKING_DIR=.phoenix-data .venv/bin/phoenix serve
+```
+
+Open `http://localhost:6006`. Phoenix keeps its SQLite database under
+`.phoenix-data/`, which is ignored by Git.
+
+When enabled, each API or CLI workflow is captured through Phoenix's
+OpenInference LangChain instrumentation and grouped by conversation thread.
+Traces include model and tool runs, timings, inputs, outputs, and errors.
+Prompts and tool data may contain dataset content, so enable tracing only when
+you want that information sent to your Phoenix instance. See the [Phoenix
+LangChain tracing guide](https://arize.com/docs/phoenix/integrations/python/langchain/langchain-tracing).
+
 ### 3. Run
 
 ```bash
@@ -100,9 +136,13 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. Upload a CSV or XLSX file to start the
-initial analysis automatically. For a single-server deployment, build the UI
-with `npm run build`; FastAPI serves `frontend/dist` when it exists.
+Open the local URL printed by Vite. Choose **Analyze a dataset** to select a
+dataset already in the workspace or upload a CSV/XLSX file, then enter the
+question you want Winnow to investigate. Choose
+**Simple chat** to start a conversation, optionally select an existing dataset
+or upload one, then continue in the chat composer. For a single-server
+deployment, build the UI with `npm run build`; FastAPI serves `frontend/dist`
+when it exists.
 
 ### Workflow logs
 
@@ -121,6 +161,19 @@ errors are reported separately with guidance to shorten the request or change
 to a model with a higher input-token allowance.
 
 ## Usage Examples
+
+### Web app
+
+- **Analyze a dataset:** select an existing dataset or upload a CSV/XLSX file,
+  then enter a question such as “Which factors are most associated with
+  customer churn?” and start the analysis. Winnow inspects the relevant data and responds with
+  findings and visualizations where useful.
+- **Simple chat:** select **Simple chat**, optionally select a loaded dataset or
+  upload a CSV/XLSX file, then ask a question and continue with follow-ups. No
+  file is required for general conversation. Simple chat uses a compact dataset
+  summary and sample; use dataset analysis for calculations across the full file.
+
+### CLI
 
 ```
 You: Load the file sample_data/iris.csv as "iris"

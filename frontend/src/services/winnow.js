@@ -21,11 +21,15 @@ export function uploadDataset(file) {
   return requestJson("/api/upload", { method: "POST", body });
 }
 
-export function chatWithWinnow(message, threadId) {
+export function getDatasets() {
+  return requestJson("/api/datasets");
+}
+
+export function chatWithWinnow(message, threadId, mode = "dataset", datasetName = null) {
   return requestJson("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, thread_id: threadId }),
+    body: JSON.stringify({ message, thread_id: threadId, mode, dataset_name: datasetName }),
   });
 }
 
