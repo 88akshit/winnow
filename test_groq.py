@@ -5,14 +5,14 @@ from openai import OpenAI
 
 load_dotenv()
 
-groq_key = "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"
+groq_key = os.getenv("GROQ_API_KEY")
 model = os.getenv("GROQ_MODEL_NAME") or "qwen/qwen3.8-27b"
 
 print("=" * 60)
 print("⚡ Groq API Diagnostic Test")
 print("=" * 60)
 
-if not groq_key or "your_groq_api_key_here" in groq_key:
+if not groq_key:
     print("❌ Error: GROQ_API_KEY is not set in .env")
     print("Please set: GROQ_API_KEY=gsk_... in .env")
     sys.exit(1)
@@ -48,4 +48,3 @@ try:
     print("=" * 60)
 except Exception as e:
     print(f"\n❌ Error during completion: {e}")
-

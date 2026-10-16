@@ -6,7 +6,7 @@ from openai import OpenAI
 # Load .env file
 load_dotenv()
 
-api_key = "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"
+api_key = os.getenv("NVIDIA_API_KEY") or os.getenv("OPENAI_API_KEY")
 base_url =  "https://integrate.api.nvidia.com/v1"
 model = "moonshotai/kimi-k3"
 
@@ -85,4 +85,3 @@ except Exception as e:
     print("\nSuggestions:")
     print(" - Check that your NVIDIA_API_KEY has not expired or exceeded quota.")
     print(" - Verify OPENAI_MODEL_NAME in .env matches an existing model in NVIDIA's catalog.")
-
